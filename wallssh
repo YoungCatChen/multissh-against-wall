@@ -83,12 +83,13 @@ callback_pingjob() {
   [ "$4" = v6 ] && PING=ping6 || PING=ping
   info pingjob "Started $PING host$2: $3 ."
 
-  $PING "$3" | awk  \
+  while sleep 2; do $PING "$3"; done | awk  \
     -v "f=/tmp/wallssh/ping$2" -v "s=$*"  \
     'BEGIN  { FS = "[\\[.= ]"; }
   /bytes from/ {
   x = match($0, /time=.* ms/);
-  print s, systime(), substr($0, x, RLENGTH) > f; close(f);
+  print s, systime(), substr($0, x, RLENGTH) > f;
+  close(f);
 }'
 }
 
