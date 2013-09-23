@@ -1,0 +1,232 @@
+#!/bin/sh
+if [ -f ~/.wallsshrc ]; then
+  . ~/.wallsshrc
+elif [ -f /etc/wallsshrc ]; then
+  . /etc/wallsshrc
+fi
+
+true ${N_TUNNELS:=4}
+true ${LISTEN_ADDRESS:=127.0.0.2}
+true ${SSH_LISTEN_PORTS_START_AT:=8000}
+true ${PRIVOXY_LISTEN_PORTS_START_AT:=8500}
+
+true ${SSH_COMMAND:=sshpass -p PASS ssh}
+true ${PRIVOXY_COMMAND:=privoxy}
+
+true ${SSH_USER:=root}
+true ${SSH_REMOTE_PORT:=22}
+true ${SSH_HOSTS:=ssh.example.com,v4}
+
+
+main() {
+  termed=
+  trap '[ -n "$termed" ] && exit 0 || kill 0; termed=1' INT TERM
+  local num numstr host ipv
+  num=1
+
+  for host in $SSH_HOSTS; do
+    numstr=`printf %02d $num`
+    ipv="${host#*,}"
+    host="${host%,*}"
+    eval "host$numstr='$host'"
+    eval "ipv$numstr='${ipv:-v4}'"
+    num="$((num+1))"
+  done
+
+  mkdir -p /tmp/wallssh
+  rm -f    /tmp/wallssh/tunnel*
+  touch /tmp/wallssh/ping99
+  touch /tmp/wallssh/lastcon99
+  touch /tmp/wallssh/tunnel9
+
+  foreachhost callback_pingjob '&'
+
+  while sleep 2; do
+    dispatch
+  done
+}
+
+info() {
+  if [ -n "$2" ]; then
+    logger -s -t "wallssh_$1" -p daemon.info $2
+  else
+    exec logger -s -t "wallssh_$1" -p daemon.info
+  fi
+}
+
+
+# Rules For Below:
+#
+# args:    $1    $2     $3       $4      [   $5     [   $6     ] ]
+# define:  num numstr hostname ipv4/ipv6 [tunnelnum [ systime  ] ]
+# example:  5    05   a.com      v4      [    2     [1371735855] ]
+#
+# Except files ping*: $5=systime, no $6
+#
+
+foreachhost() {
+  local __num __numstr __host __ipv
+  __num=1
+
+  while :; do
+    __numstr=`printf %02d $__num`
+    eval "__host=\$host$__numstr"
+    eval "__ipv=\$ipv$__numstr"
+    [ -z "$__host" ] && break
+    eval "$1" "$__num" "$__numstr" "$__host" "$__ipv" "$2"
+    __num=$((__num+1))
+  done
+}
+
+callback_pingjob() {
+  local PING
+  [ "$4" = v6 ] && PING=ping6 || PING=ping
+  info pingjob "Started $PING host$2: $3 ."
+
+  $PING "$3" | awk  \
+    -v "f=/tmp/wallssh/ping$2" -v "s=$*"  \
+    'BEGIN  { FS = "[\\[.= ]"; }
+  /bytes from/ {
+  x = match($0, /time=.* ms/);
+  print s, systime(), substr($0, x, RLENGTH) > f; close(f);
+}'
+}
+
+
+dispatch() {
+  local cnt i
+  cnt="`ls -1 /tmp/wallssh/tunnel* | wc -l`"
+  cnt="$((cnt - 1))"
+  [ "$cnt" -ge 4 ] && return 1
+
+  info dispatch "Only $cnt tunnels connected. Creating a new one..."
+  i=0
+
+  while i=$(( i+1 )); [ $i -le 4 ]; do
+    [ -f "/tmp/wallssh/tunnel$i" ] && continue
+
+    select_host
+
+    if [ -n "$availA" ]; then
+      tunnel "$availA" "$availB" "$availC" "$availD" "$i" &
+      sleep 3
+      return 0
+    fi
+
+    info dispatch 'No available host to connect.'
+    return 1
+  done
+
+  info dispatch 'All tunnels connected. Why?'
+  return 1
+}
+
+select_host() {  # OUT: availA, availB, availC, availD
+  local i pings lasts tunnels
+  foreachhost callback_reset_avail
+
+  pings="`awk 'BEGIN { t=systime()-12; }  $5 >= t { print $2; }' /tmp/wallssh/ping*`"
+  lasts="`awk 'BEGIN { t=systime()-180; } $6 >= t { print $2; }' /tmp/wallssh/lastcon*`"
+  tunnels="`awk '{ print $2; }' /tmp/wallssh/tunnel*`"
+
+  for i in $pings 99; do
+    eval "avail$i=1"
+  done
+  for i in $lasts $tunnels 99; do
+    unset avail$i
+  done
+
+  unset availA availB availC availD
+  foreachhost callback_first_avail_host
+  [ -n "$availA" ]
+}
+
+callback_reset_avail() {
+  unset avail$2
+}
+
+callback_first_avail_host() {
+  [ -z "$availA" ] || return
+
+  local __avail
+  eval "__avail=\$avail$2"
+
+  if [ "$__avail" = 1 ]; then
+    availA="$1"
+    availB="$2"
+    availC="$3"
+    availD="$4"
+  fi
+}
+
+tunnel() {
+  echo "$@"     > /tmp/wallssh/tunnel$5
+  date "+$* %s" > /tmp/wallssh/lastcon$2
+  info tunnel "Tunnel starting. host$2 = $3 @ tunnel $5."
+  local underlined
+  underlined="`echo $3 | sed 's/\./_/g'`"
+
+  run_ssh "$@" | \
+    filterout_verbose | \
+    trigger_privoxy "$@" | \
+    info "tunnel_host$2_$underlined"
+
+  rm -f /tmp/wallssh/tunnel$5
+}
+
+run_ssh() {
+  exec $SSH_COMMAND -vN -p "$SSH_REMOTE_PORT" \
+    -D "$LISTEN_ADDRESS:$(( SSH_LISTEN_PORTS_START_AT + $5 ))" \
+    -o Compression=yes \
+    -o TCPKeepAlive=yes \
+    -o ServerAliveInterval=3 \
+    -o ServerAliveCountMax=7 \
+    -o ExitOnForwardFailure=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o PreferredAuthentications=password "$SSH_USER@$3" 2>&1
+}
+
+run_privoxy() {
+  echo "	confdir /etc/privoxy
+  logdir /var/log
+  logfile privoxy-usassh$5
+  listen-address   $LISTEN_ADDRESS:$((PRIVOXY_LISTEN_PORTS_START_AT + $5 ))
+  forward-socks5 / $LISTEN_ADDRESS:$((    SSH_LISTEN_PORTS_START_AT + $5 )) .
+  buffer-limit 40960
+  keep-alive-timeout 300
+  connection-sharing 1
+  socket-timeout 30
+  " > /tmp/wallssh/privoxy$5.conf
+
+  exec privoxy --no-daemon /tmp/wallssh/privoxy$5.conf 2>&1
+}
+
+filterout_verbose() {
+  exec awk '! /channel [0-9]|forwarding to socks/ { print; fflush(); }' "$@"
+}
+
+trigger_privoxy() {
+  local PID
+
+  awk '
+  { print; fflush(); }
+  /Entering interactive session/ { exit(55); }'
+
+  if [ "$?" = 55 ]; then
+    echo 'Tunnel established. Starting Privoxy...'
+    run_privoxy "$@" &
+    PID=$!
+    cat
+    echo 'Tunnel broke. Stopping Privoxy...'
+    kill $PID
+    echo 'Done.'
+  else
+    echo 'Tunnel establishing failed.'
+    return 1
+  fi
+}
+
+
+main "$@"
+

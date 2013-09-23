@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# Number of tunnels.
+N_TUNNELS=4
+
+# Listening to what?
+LISTEN_ADDRESS='127.0.0.2'
+SSH_LISTEN_PORTS_START_AT=8000
+PRIVOXY_LISTEN_PORTS_START_AT=8500
+
+# Username and remote port for ssh.
+SSH_USER=USER
+SSH_REMOTE_PORT=22
+
+# Choose one command for executing ssh. Or write your own one.
+#SSH_COMMAND='ssh'
+#SSH_COMMAND='obssh -Z OBKEY'
+SSH_COMMAND='sshpass -p PASS ssh'
+#SSH_COMMAND='env OPENSSH_PASSWORD=PASS ssh'
+#SSH_COMMAND='sshpass -p PASS obssh -Z OBKEY'
+
+# Command for executing privoxy.
+PRIVOXY_COMMAND=privoxy
+
+# Candidate hosts to connect.
+SSH_HOSTS='
+example1.com
+example2.com,v4
+example3.com,v6
+'
+
