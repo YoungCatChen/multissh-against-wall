@@ -46,9 +46,11 @@ execcmd pwd
 
 # Copy files.
 
-execcmd install -m 755 -d /etc
-execcmd install -m 755 wallssh /etc/wallssh
-execcmd install -m 640 wallsshrc /etc/wallsshrc
+execcmd mkdir -pm 755 /etc
+execcmd cp -fP wallssh /etc/
+execcmd cp -fP wallsshrc /etc/
+execcmd chmod 755 /etc/wallssh
+execcmd chmod 640 /etc/wallsshrc
 
 
 # And we are done.
