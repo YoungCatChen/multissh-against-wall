@@ -1,5 +1,11 @@
 #!/bin/sh
 
+installs='
+755 wallssh       /etc/wallssh
+755 wallssh.initd /etc/init.d/wallssh
+640 wallsshrc     /etc/wallsshrc      check
+'
+
 execcmd()
 {
   execcmd_before "$@"
@@ -46,11 +52,18 @@ execcmd pwd
 
 # Copy files.
 
-execcmd mkdir -pm 755 /etc
-execcmd cp -fP wallssh /etc/
-execcmd cp -fP wallsshrc /etc/
-execcmd chmod 755 /etc/wallssh
-execcmd chmod 640 /etc/wallsshrc
+execcmd mkdir -pm 755 /etc/init.d
+
+echo "$installs" | while read mod from to check; do
+  if [ -n "$from" ]; then
+    if [ "$check" = check ]; then
+      [ -f "$to" ] && continue
+    fi
+
+    execcmd cp -fP "$from" "$to"
+    execcmd chmod "$mod" "$to"
+  fi
+done
 
 
 # And we are done.
