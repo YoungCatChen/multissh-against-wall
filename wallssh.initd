@@ -4,10 +4,11 @@ START=95
 SERVICE_NAME=wallssh
 SERVICE_DAEMONIZE=1
 SERVICE_WRITE_PID=1
-SERVICE_STOP_TIME=10
+SERVICE_STOP_TIME=20
 
 start() {
   service_check /bin/sh && return 1
+  ulimit -n 60000
   service_start /etc/wallssh
 }
 

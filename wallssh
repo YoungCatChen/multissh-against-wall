@@ -19,8 +19,8 @@ true ${SSH_HOSTS:=ssh.example.com,v4}
 
 
 main() {
-  termed=
-  trap '[ -n "$termed" ] && exit 0 || kill 0; termed=1' INT TERM
+  settrap
+
   local num numstr host ipv
   num=1
 
@@ -41,7 +41,7 @@ main() {
 
   foreachhost callback_pingjob '&'
 
-  while sleep 2; do
+  while sleep 5; do
     dispatch
   done
 }
@@ -52,6 +52,11 @@ info() {
   else
     exec logger -s -t "wallssh_$1" -p daemon.info
   fi
+}
+
+settrap() {
+  termed=
+  trap '[ -z "$termed" ] && { termed=1; kill -term 0; }; exit 0' HUP INT TERM
 }
 
 
@@ -79,11 +84,13 @@ foreachhost() {
 }
 
 callback_pingjob() {
+  settrap
+
   local PING
   [ "$4" = v6 ] && PING=ping6 || PING=ping
   info pingjob "Started $PING host$2: $3 ."
 
-  while sleep 2; do $PING "$3"; done | awk  \
+  while true; do $PING "$3"; sleep 5; done | awk  \
     -v "f=/tmp/wallssh/ping$2" -v "s=$*"  \
     'BEGIN  { FS = "[\\[.= ]"; }
   /bytes from/ {
@@ -95,10 +102,12 @@ callback_pingjob() {
 
 
 dispatch() {
+  settrap
+
   local cnt i
   cnt="`ls -1 /tmp/wallssh/tunnel* | wc -l`"
   cnt="$((cnt - 1))"
-  [ "$cnt" -ge 4 ] && return 1
+  [ "$cnt" -ge "$N_TUNNELS" ] && return 1
 
   info dispatch "Only $cnt tunnels connected. Creating a new one..."
   i=0
@@ -110,7 +119,7 @@ dispatch() {
 
     if [ -n "$availA" ]; then
       tunnel "$availA" "$availB" "$availC" "$availD" "$i" &
-      sleep 3
+      sleep 2
       return 0
     fi
 
@@ -161,6 +170,8 @@ callback_first_avail_host() {
 }
 
 tunnel() {
+  settrap
+
   echo "$@"     > /tmp/wallssh/tunnel$5
   date "+$* %s" > /tmp/wallssh/lastcon$2
   info tunnel "Tunnel starting. host$2 = $3 @ tunnel $5."
@@ -176,6 +187,8 @@ tunnel() {
 }
 
 run_ssh() {
+  settrap
+
   exec $SSH_COMMAND -vN -p "$SSH_REMOTE_PORT" \
     -D "$LISTEN_ADDRESS:$(( SSH_LISTEN_PORTS_START_AT + $5 ))" \
     -o Compression=yes \
@@ -189,7 +202,9 @@ run_ssh() {
 }
 
 run_privoxy() {
-  echo "	confdir /etc/privoxy
+  settrap
+
+  echo "confdir /etc/privoxy
   logdir /var/log
   logfile privoxy-usassh$5
   listen-address   $LISTEN_ADDRESS:$((PRIVOXY_LISTEN_PORTS_START_AT + $5 ))
@@ -204,10 +219,14 @@ run_privoxy() {
 }
 
 filterout_verbose() {
+  settrap
+
   exec awk '! /channel [0-9]|forwarding to socks/ { print; fflush(); }' "$@"
 }
 
 trigger_privoxy() {
+  settrap
+
   local PID
 
   awk '
